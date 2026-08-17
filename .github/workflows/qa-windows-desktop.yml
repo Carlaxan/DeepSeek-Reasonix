@@ -1,0 +1,95 @@
+# One-off QA packaging for tester handoff. Not part of the release control plane.
+# The source ref is pinned so the produced binaries match the requested main-v2 tip.
+name: QA Windows desktop package
+
+on:
+  push:
+    branches: [chore/qa-windows-main-v2-20260818]
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: 2be228e2ccc6b78b96d3e746c653e652ecdb89c7
+
+jobs:
+  package:
+    name: package windows-amd64
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Verify pinned source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: desktop/go.mod
+          cache: true
+          cache-dependency-path: desktop/go.sum
+
+      - uses: pnpm/action-setup@v6.0.9
+        with:
+          version: 10
+          run_install: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: desktop/frontend/pnpm-lock.yaml
+
+      - name: Install Wails CLI
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install "github.com/wailsapp/wails/v2/cmd/wails@$(cat "$GITHUB_WORKSPACE/.wails-version")"
+
+      - name: Install NSIS
+        run: pwsh -NoProfile -File scripts/install-nsis.ps1
+
+      - name: Resolve QA version label
+        id: ver
+        run: |
+          short="$(git rev-parse --short=12 HEAD)"
+          echo "version=v0.0.0-qa.${short}" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "source_short=$short" >> "$GITHUB_OUTPUT"
+
+      - name: Build Windows installer and portable archive
+        timeout-minutes: 25
+        run: scripts/desktop-build.sh windows/amd64 "${{ steps.ver.outputs.version }}" canary
+
+      - name: Write checksums and handoff notes
+        run: |
+          sha256sum \
+            dist/Reasonix-windows-amd64-installer.exe \
+            dist/Reasonix-windows-amd64.zip \
+            > dist/SHA256SUMS.txt
+          {
+            echo "QA Windows desktop package"
+            echo "source_sha=${{ steps.ver.outputs.source_sha }}"
+            echo "version=${{ steps.ver.outputs.version }}"
+            echo "platform=windows/amd64"
+            echo "channel=canary"
+            echo "built_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "unsigned=true"
+            echo "note=Tester build from the pinned main-v2 tip; not an official signed release."
+            echo
+            cat dist/SHA256SUMS.txt
+          } | tee dist/QA-HANDOFF.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Reasonix-windows-amd64-qa-${{ steps.ver.outputs.source_short }}
+          path: |
+            dist/Reasonix-windows-amd64-installer.exe
+            dist/Reasonix-windows-amd64.zip
+            dist/SHA256SUMS.txt
+            dist/QA-HANDOFF.txt
+          if-no-files-found: error
+          retention-days: 14
