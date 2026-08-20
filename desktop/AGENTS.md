@@ -7,10 +7,13 @@ one structural rule set, earned across #8657/#8688 and the follow-up refactors.
 Keep to it when touching anything that can move the transcript viewport.
 
 - **Single writer**: only `frontend/src/lib/useTranscriptScrollArbiter.ts` may
-  call `virtuosoRef.current.scrollTo/scrollBy/scrollToIndex`. Everything else
+  call `virtuosoRef.current.scrollTo/scrollBy/scrollToIndex`, and raw
+  `scroller.scrollTop` assignments on transcript surfaces are equally
+  off-limits (route through the arbiter's `SCROLL_TO_OFFSET` channel, e.g.
+  owner `"anchor-compensation"` / `"block-window-prepend"`). Everything else
   (jumps, tail-follow, selection edge scrolls, layout recovery) submits
   requests to the arbiter. `frontend/scripts/check-single-scroll-writer.mjs`
-  enforces it statically; `lib/transcriptScrollProbe.ts` observes it at
+  enforces both statically; `lib/transcriptScrollProbe.ts` observes it at
   runtime. Never add a second writer — extend the arbiter's reducer
   (`lib/transcriptScrollArbiter.ts`) with an explicit transition instead.
 - **Preemption is explicit**: user intent (wheel/touch/key/pointer), selection,

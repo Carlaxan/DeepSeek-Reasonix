@@ -83,7 +83,16 @@ console.log("\nbundle budgets");
 // DingTalk channel status and locale wiring move the current-base production
 // build from 427.2 to 427.7 KiB and test from 428.6 to 429.1 KiB. Keep about
 // 0.1 KiB of build-SHA headroom with a 0.5 KiB (about 0.117%) ratchet per gate.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 429.2 : 427.8;
+// The W1 scroll hardening (bottom-hold tail re-entry, steady-state manual-mode
+// anchor compensation, and routing the block-window prepend through the
+// arbiter's offset channel) adds 0.6 KiB gzip (0.14%) to the production path;
+// retain it with a 0.8 KiB (0.19%) ratchet instead of weakening the
+// single-writer and bottom-hold contracts.
+// The W4 composer hardening (plain-textarea IME freeze, compositionend
+// resync, programmatic-set force sync) adds 0.23 KiB gzip (0.054%) over the
+// W1 path; retain it with a 0.2 KiB (0.047%) ratchet and keep ~0.15 KiB of
+// build-SHA headroom.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 430.0 : 428.8;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -133,6 +142,10 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // production and 2358.3 KiB in test: about 9.0 KiB (0.38%) over main-v2's
 // channel gates. Retain that attributable UI capacity with 0.1 KiB of build-SHA
 // headroom without widening the gzip or largest-chunk exceptions.
+// The frontend-hardening workstreams (scroll bottom-hold + anchor
+// compensation, sidebar skeleton/rename fallback, recovery-copy badge,
+// composer IME freeze) fit inside this headroom on the v1.31.0 base — no
+// additional ratchet.
 const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_358.4 : 2_353.2;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

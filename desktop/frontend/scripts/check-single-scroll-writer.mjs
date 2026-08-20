@@ -10,6 +10,12 @@
  * invariant that keeps user scrolls, tail-follow, and anchor recovery from
  * fighting each other (#8657).
  *
+ * The same invariant applies to raw `scrollTop` assignments on scroller
+ * elements: they bypass the Virtuoso handle and therefore the check above.
+ * Only the files in ALLOWED_RAW_SCROLLTOP may write `.scrollTop` directly,
+ * each with a documented reason; everything else routes through the
+ * arbiter's offset channel (e.g. owner "block-window-prepend").
+ *
  * Other virtualized surfaces (WorkspacePanel, VirtualMenu, LineNumberCode)
  * use @tanstack/react-virtual `virtualizer` instances, not the transcript
  * Virtuoso handle, and are out of scope.
@@ -27,9 +33,25 @@ const ALLOWED_WRITERS = new Set([
   "lib/useTranscriptScrollArbiter.ts",
 ]);
 
+// Raw `.scrollTop` writes bypass the Virtuoso handle entirely. The allowed
+// set is deliberate and non-transcript (or natively paired with the arbiter):
+// - lib/nestedScrollHandoff.ts: the trackpad handoff lane; every write is
+//   paired with onParentScrollIntent so the arbiter sees the gesture.
+// - components/SettingsPanel.tsx: the settings overlay's own scroller.
+// - components/WorkspacePanel.tsx: the project tree's own scroller.
+const ALLOWED_RAW_SCROLLTOP = new Set([
+  "lib/nestedScrollHandoff.ts",
+  "components/SettingsPanel.tsx",
+  "components/WorkspacePanel.tsx",
+]);
+
 // Matches imperative scroll calls on the transcript Virtuoso handle, whether
 // reached through `virtuosoRef.current` directly or a local `handle` alias.
 const VIRTUOSO_SCROLL_RE = /(?:virtuoso[A-Za-z]*\.current|\bhandle)\??\.\s*scroll(?:To|By|ToIndex)\s*\(/;
+
+// Matches raw `.scrollTop` assignments (`=`, `+=`, `-=`) but not comparisons
+// (`===`, `>=`, ...) or property reads.
+const RAW_SCROLLTOP_RE = /\.scrollTop\s*(?:\+=|-=|=(?!=))/;
 
 function sourceFiles(root) {
   const files = [];
@@ -50,16 +72,24 @@ function sourceFiles(root) {
 let failures = 0;
 for (const file of sourceFiles(SOURCE_ROOT)) {
   const relative = file.slice(SOURCE_ROOT.length + 1).replaceAll("\\", "/");
-  if (ALLOWED_WRITERS.has(relative)) continue;
   const lines = readFileSync(file, "utf8").split("\n");
   lines.forEach((line, index) => {
-    if (!VIRTUOSO_SCROLL_RE.test(line)) return;
-    failures += 1;
-    console.error(
-      `check-single-scroll-writer: ${relative}:${index + 1} issues an imperative Virtuoso scroll call outside the allowed writer modules.\n` +
-      `  ${line.trim()}\n` +
-      "  Route the write through the transcript scroll coordinator instead (see #8657 scroll-arbiter refactor).",
-    );
+    if (!ALLOWED_WRITERS.has(relative) && VIRTUOSO_SCROLL_RE.test(line)) {
+      failures += 1;
+      console.error(
+        `check-single-scroll-writer: ${relative}:${index + 1} issues an imperative Virtuoso scroll call outside the allowed writer modules.\n` +
+        `  ${line.trim()}\n` +
+        "  Route the write through the transcript scroll coordinator instead (see #8657 scroll-arbiter refactor).",
+      );
+    }
+    if (!ALLOWED_RAW_SCROLLTOP.has(relative) && RAW_SCROLLTOP_RE.test(line)) {
+      failures += 1;
+      console.error(
+        `check-single-scroll-writer: ${relative}:${index + 1} assigns a scroller's scrollTop directly, bypassing the transcript scroll arbiter.\n` +
+        `  ${line.trim()}\n` +
+        "  Route the write through the arbiter's offset channel (writeOffset / SCROLL_TO_OFFSET) instead.",
+      );
+    }
   });
 }
 

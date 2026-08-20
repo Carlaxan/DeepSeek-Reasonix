@@ -9,6 +9,7 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import MarkdownHistory from "../components/MarkdownHistory";
+import { TranscriptScrollWriteProvider } from "../components/TranscriptLayoutIntentContext";
 import { parseMarkdown, markdownContentRevision } from "../lib/markdownPipeline";
 import {
   disposeMarkdownWorkerClient,
@@ -218,9 +219,21 @@ console.log("\nmarkdown history rendering");
     return { top, bottom: top + height, left: 0, right: 0, width: 0, height, x: 0, y: top, toJSON: () => ({}) };
   };
   const text = Array.from({ length: 420 }, (_, i) => `Paragraph ${i} with some *content*.`).join("\n\n");
+  // The prepend compensation must reach the scroller through the arbiter's
+  // offset-write channel (owner "block-window-prepend"), never a raw write.
+  const offsetWrites: Array<{ owner: string; top: number }> = [];
+  const stubWriteOffset = (owner: string, top: number) => {
+    offsetWrites.push({ owner, top });
+    rootEl.scrollTop = top;
+    return true;
+  };
   const root5 = createRoot(rootEl);
   await act(async () => {
-    root5.render(<MarkdownHistory text={text} entryId="md-history-huge" fallback={null} />);
+    root5.render(
+      <TranscriptScrollWriteProvider value={stubWriteOffset}>
+        <MarkdownHistory text={text} entryId="md-history-huge" fallback={null} />
+      </TranscriptScrollWriteProvider>,
+    );
   });
   await flush();
   const container = rootEl.querySelector(".md[data-markdown-blocks]");
@@ -235,6 +248,10 @@ console.log("\nmarkdown history rendering");
   await intersectSentinel("[data-markdown-older-sentinel]", true);
   eq(rootEl.querySelector(".md[data-markdown-blocks]")?.getAttribute("data-markdown-visible-blocks"), "120", "entering the older edge prepends one bounded page");
   eq(rootEl.scrollTop, 1_199, "prepending compensates for the old leading block boundary's measured movement");
+  ok(
+    offsetWrites.length > 0 && offsetWrites.every((write) => write.owner === "block-window-prepend"),
+    "the prepend compensation is owned by block-window-prepend through the arbiter channel",
+  );
   await intersectSentinel("[data-markdown-older-sentinel]", true);
   eq(rootEl.querySelector(".md[data-markdown-blocks]")?.getAttribute("data-markdown-visible-blocks"), "120", "a stationary sentinel cannot start a render loop");
   await intersectSentinel("[data-markdown-older-sentinel]", false);
@@ -267,7 +284,11 @@ console.log("\nmarkdown history rendering");
 
   const replacement = Array.from({ length: 420 }, (_, i) => `Replacement ${i} with some *content*.`).join("\n\n");
   await act(async () => {
-    root5.render(<MarkdownHistory text={replacement} entryId="md-history-huge-replacement" fallback={null} />);
+    root5.render(
+      <TranscriptScrollWriteProvider value={stubWriteOffset}>
+        <MarkdownHistory text={replacement} entryId="md-history-huge-replacement" fallback={null} />
+      </TranscriptScrollWriteProvider>,
+    );
   });
   await flush();
   eq(rootEl.querySelector(".md[data-markdown-blocks]")?.getAttribute("data-markdown-visible-blocks"), "24", "an equal-sized replacement document resets to its own tail");

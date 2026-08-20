@@ -392,8 +392,16 @@ jobs:
           pnpm --dir frontend test:stream
           pnpm --dir frontend test:motion
           pnpm --dir frontend test:motion-browser
+          pnpm --dir frontend test:composer
           pnpm --dir frontend test:transcript
           pnpm --dir frontend test:transcript-browser
+
+      # Session-switch performance bench. Non-blocking for now; promote to a
+      # blocking step after two weeks of stability. Chromium was already
+      # installed during the "Build frontend" step above.
+      - name: Session-switch performance bench
+        continue-on-error: true
+        run: pnpm --dir frontend test:bench
 
       - name: Test usage statistics frontend
         run: pnpm --dir frontend test:usage-stats
@@ -538,6 +546,11 @@ jobs:
 
       - name: Test native motion contracts
         run: pnpm --dir frontend test:motion
+
+      # JSDOM transcript suite runs under bash/jsdom only; Playwright browser
+      # tests (test:transcript-browser) are not installed on this leg.
+      - name: Test transcript contracts
+        run: pnpm --dir frontend test:transcript
 
       - name: Test WebView2 native smoke state machine
         shell: pwsh

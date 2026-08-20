@@ -9,6 +9,7 @@ import { enqueueInboxGuidance } from "../lib/inboxSubmit";
 import { formatInboxError, isInboxItemMissing } from "../lib/inboxError";
 import { inboxScopeKey } from "../lib/composerInboxQueue";
 import { useComposerInboxRefresh } from "../lib/useComposerInboxRefresh";
+import { useComposerImeGuard } from "../lib/useComposerImeGuard";
 import { guidanceIsInFlight, guidanceNeedsRetry, guidanceTextMatches, kickIdleGuidance, markGuidanceQueued } from "../lib/composerGuidance";
 import { canUsePromptHistory, composerEnterAction, composerEscapeAction, composerMenuKeyAction, insertComposerNewline, isFnKeyEvent, isImeKeyEvent, promptHistoryDirectionFromEvent } from "../lib/composerKeyboard";
 import { cacheGeneration, loadOlder } from "../lib/composerHistory";
@@ -380,6 +381,14 @@ async function dataURLHash(dataUrl: string): Promise<string> {
 function composerMaxHeight(): number {
   if (typeof window === "undefined") return COMPOSER_MAX_HEIGHT;
   return Math.max(COMPOSER_MIN_HEIGHT, Math.min(COMPOSER_MAX_HEIGHT, Math.floor(window.innerHeight * COMPOSER_MAX_VIEWPORT_RATIO)));
+}
+
+// Hero (creation) input cap: the old 96px hard cap clipped longer drafts
+// before the card autosize took over; give the hero min(30vh, 160px) so a
+// visible scrollbar takes over instead (#8494/#8742/#9019).
+function composerHeroInputMaxHeight(): number {
+  if (typeof window === "undefined") return 160;
+  return Math.min(Math.floor(window.innerHeight * 0.3), 160);
 }
 
 // The rendered card includes the run strip while a turn runs; subtract it to
@@ -789,8 +798,6 @@ export function Composer({
   const intentHoverTimerRef = useRef<number | null>(null);
   const creationChrome = showContextWindowRing;
   const wasRunningByDraftRef = useRef<Record<string, boolean>>({ [draftKey]: running });
-  const composingRef = useRef(false);
-  const lastCompositionEndAt = useRef(0);
   const pastChatSearchComposingRef = useRef(false);
   const pastChatSearchLastCompositionEndAt = useRef(0);
   const lastSelectionRef = useRef({ start: 0, end: 0 });
@@ -2944,7 +2951,7 @@ export function Composer({
       const previousHeight = node.style.height;
       node.style.height = "auto";
       const scrollHeight = node.scrollHeight || 20;
-      const maxHeight = 96;
+      const maxHeight = composerHeroInputMaxHeight();
       const nextHeight = Math.min(Math.max(scrollHeight, 20), maxHeight);
       const nextOverflow = scrollHeight > maxHeight + 1;
       node.style.height = previousHeight;
@@ -2965,6 +2972,73 @@ export function Composer({
     setTextareaAutoHeight((current) => (current === nextHeight ? current : nextHeight));
     setTextareaAutoOverflow((current) => (current === nextOverflow ? current : nextOverflow));
   }, [composerHeight, heroMode, invocations.length]);
+
+  // Native composition listeners for the plain textarea, the same mechanism
+  // the rich input uses: React's synthetic composition events fall back to
+  // keyCode-229 inference wherever CompositionEvent is missing, and the
+  // freeze bookkeeping must run synchronously with the browser's composition
+  // lifecycle, not React's event batching.
+  useEffect(() => {
+    const node = taRef.current;
+    if (!node) return;
+    const onStart = () => {
+      composingRef.current = true;
+      imeStateTextRef.current = textRef.current;
+    };
+    const onEnd = () => {
+      composingRef.current = false;
+      lastCompositionEndAt.current = Date.now();
+      imeStateTextRef.current = null;
+      // compositionend's DOM value is authoritative: an IME cancel restores
+      // the pre-composition text while state may still hold the provisional
+      // text.
+      if (node.value !== textRef.current) {
+        const nextSelection = {
+          start: node.selectionStart ?? node.value.length,
+          end: node.selectionEnd ?? node.value.length,
+        };
+        textRef.current = node.value;
+        setText(node.value);
+        lastSelectionRef.current = nextSelection;
+        setPlainSelection(nextSelection);
+      }
+    };
+    node.addEventListener("compositionstart", onStart);
+    node.addEventListener("compositionend", onEnd);
+    return () => {
+      node.removeEventListener("compositionstart", onStart);
+      node.removeEventListener("compositionend", onEnd);
+      // Unmounting the textarea mid-composition (e.g. an invocation token
+      // swaps in the rich input) may never deliver compositionend; leaving
+      // composingRef stuck would suppress Enter-to-send forever.
+      if (composingRef.current) {
+        composingRef.current = false;
+        lastCompositionEndAt.current = Date.now();
+        imeStateTextRef.current = null;
+      }
+    };
+  }, [invocations.length]);
+
+  // Programmatic setText (history recall, menu inserts, draft switches)
+  // bypasses the textarea's onChange, so while the IME freeze renders the
+  // textarea uncontrolled those writes would never reach the DOM. A text
+  // change the IME path did not produce forces an authoritative resync and
+  // ends the frozen composition: programmatic content wins.
+  useLayoutEffect(() => {
+    if (!composingRef.current) return;
+    if (imeStateTextRef.current === text) return;
+    composingRef.current = false;
+    imeStateTextRef.current = null;
+    const node = taRef.current;
+    if (!node) return;
+    node.value = text;
+    const caret = Math.min(lastSelectionRef.current.start, text.length);
+    try {
+      node.setSelectionRange(caret, caret);
+    } catch {
+      // Detached/jsdom node: caret restore is best-effort.
+    }
+  }, [text]);
 
   useLayoutEffect(() => {
     measureTextareaAutoHeight();
@@ -3611,6 +3685,10 @@ export function Composer({
     ? ({ height: `${textareaAutoHeight}px`, overflowY: textareaAutoOverflow ? "auto" : "hidden" } as CSSProperties)
     : undefined;
   const composerAutoExpanded = composerHeight === null && textareaAutoHeight !== null && textareaAutoHeight > 40;
+  // Autosize mode flips overflow-y to auto once content exceeds the max
+  // height; the card modifier restores a thin scrollbar for exactly that
+  // state so long drafts expose their scrollability (#8494/#8742/#9019).
+  const composerAutoOverflow = composerHeight === null && textareaAutoOverflow;
   const composerResizeValue = composerHeight ?? clampComposerHeight((textareaAutoHeight ?? 0) + COMPOSER_AUTO_RESERVED_HEIGHT);
   void onSetMode;
   const chooseApprovalMode = (nextMode: ToolApprovalMode) => {
@@ -4399,7 +4477,7 @@ export function Composer({
         </div>
       )}
       <div
-        className={`composer-card${composerHeight !== null || composerResizing ? " composer-card--resized" : ""}${composerAutoExpanded ? " composer-card--autosized" : ""}${composerResizing ? " composer-card--resizing" : ""}${running ? (waitingPrompt ? " composer-card--waiting" : " composer-card--running") : ""}`}
+        className={`composer-card${composerHeight !== null || composerResizing ? " composer-card--resized" : ""}${composerAutoExpanded ? " composer-card--autosized" : ""}${composerAutoOverflow ? " composer-card--auto-overflow" : ""}${composerResizing ? " composer-card--resizing" : ""}${running ? (waitingPrompt ? " composer-card--waiting" : " composer-card--running") : ""}`}
         ref={composerCardRef}
         style={composerCardStyle}
       >
@@ -4511,7 +4589,7 @@ export function Composer({
                   ref={taRef}
                   className="composer__input"
                   aria-label={t("composer.placeholder")} spellCheck={false} autoCorrect="off" autoCapitalize="off"
-                  value={text}
+                  value={composingRef.current ? undefined : text}
                   onInputCapture={(e) => {
                     pendingNativeInputTypeRef.current = (e.nativeEvent as InputEvent).inputType;
                   }}
@@ -4520,6 +4598,23 @@ export function Composer({
                     const inputType = (e.nativeEvent as InputEvent).inputType
                       || pendingNativeInputTypeRef.current;
                     pendingNativeInputTypeRef.current = undefined;
+                    if (composingRef.current) {
+                      if ((e.nativeEvent as InputEvent).isComposing || inputType === "insertCompositionText") {
+                        // Mid-composition edits still reach state so app
+                        // logic (menus, counters, drafts) sees the live text;
+                        // the uncontrolled render above keeps the provisional
+                        // text out of React's DOM sync.
+                        imeStateTextRef.current = e.target.value;
+                      } else {
+                        // A non-composition input while frozen is the commit
+                        // (Chromium can fire it before compositionend;
+                        // WebView2 can deliver the committed text in a
+                        // following non-composing input): end the freeze so
+                        // this render resyncs normally.
+                        composingRef.current = false;
+                        imeStateTextRef.current = null;
+                      }
+                    }
                     resetPromptHistoryNavigation();
                     textRef.current = e.target.value;
                     setText(e.target.value);
@@ -4539,13 +4634,6 @@ export function Composer({
                   onContextMenu={openInputMenu}
                   onPaste={onPaste}
                   onKeyDown={onKeyDown}
-                  onCompositionStart={() => {
-                    composingRef.current = true;
-                  }}
-                  onCompositionEnd={() => {
-                    composingRef.current = false;
-                    lastCompositionEndAt.current = Date.now();
-                  }}
                   style={textareaStyle}
                   placeholder={composerPlaceholder}
                   rows={1}

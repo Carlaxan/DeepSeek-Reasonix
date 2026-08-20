@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -1130,6 +1131,58 @@ func digestAndSizeSessionMessages(msgs []provider.Message) ([sha256.Size]byte, i
 	return out, size, nil
 }
 
+// sessionTranscriptHasher accumulates the transcript digest exactly like
+// digestAndSizeSessionMessages, one message at a time, so the load path can
+// hash each message as it is decoded instead of re-serializing the whole
+// transcript in a second pass. A nil receiver is a no-op so decode paths can
+// hash unconditionally.
+type sessionTranscriptHasher struct {
+	h   hash.Hash
+	err error
+}
+
+func newSessionTranscriptHasher() *sessionTranscriptHasher {
+	return &sessionTranscriptHasher{h: sha256.New()}
+}
+
+func (s *sessionTranscriptHasher) reset() {
+	if s == nil {
+		return
+	}
+	s.h.Reset()
+	s.err = nil
+}
+
+func (s *sessionTranscriptHasher) add(m provider.Message) {
+	if s == nil || s.err != nil {
+		return
+	}
+	b, err := json.Marshal(messageForSessionIdentity(m))
+	if err != nil {
+		s.err = err
+		return
+	}
+	_, _ = s.h.Write(b)
+	_, _ = s.h.Write([]byte{'\n'})
+}
+
+func (s *sessionTranscriptHasher) addAll(msgs []provider.Message) {
+	for _, m := range msgs {
+		s.add(m)
+	}
+}
+
+// sum reports the accumulated digest. ok is false when no hashing happened
+// (nil hasher) or a message failed to encode; callers must then fall back to
+// digestSessionMessages.
+func (s *sessionTranscriptHasher) sum() (digest [sha256.Size]byte, ok bool) {
+	if s == nil || s.err != nil {
+		return digest, false
+	}
+	copy(digest[:], s.h.Sum(nil))
+	return digest, true
+}
+
 func messagesHavePrefix(full, prefix []provider.Message) bool {
 	if len(prefix) > len(full) {
 		return false
@@ -1392,7 +1445,7 @@ func LoadSession(path string) (*Session, error) {
 }
 
 func loadSessionUnlocked(path string) (*Session, error) {
-	msgs, _, damaged, err := loadSessionMessages(path)
+	msgs, _, damaged, rawDigest, rawDigestOK, err := loadSessionMessagesWithDigest(path)
 	if err != nil {
 		return nil, err
 	}
@@ -1418,7 +1471,19 @@ func loadSessionUnlocked(path string) (*Session, error) {
 		s.rawMessages = msgs
 	}
 	s.Messages = normalized
-	if digest, err := digestSessionMessages(s.Messages); err == nil {
+	// The decode pass already hashed the transcript it produced; when the
+	// repairs above returned it unchanged (the common case), that digest is
+	// exactly digestSessionMessages(s.Messages) and the full re-serialize pass
+	// is skipped. A repaired transcript must be re-hashed from its final form.
+	digest, digestOK := rawDigest, rawDigestOK
+	if s.normalizedDirty || !digestOK {
+		if d, derr := digestSessionMessages(s.Messages); derr == nil {
+			digest, digestOK = d, true
+		} else {
+			digestOK = false
+		}
+	}
+	if digestOK {
 		// Pair the raw pre-repair transcript when normalization changed it.
 		diskView := s.Messages
 		if s.normalizedDirty {

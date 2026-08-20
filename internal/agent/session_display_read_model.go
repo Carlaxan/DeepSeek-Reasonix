@@ -26,13 +26,15 @@ func LoadSessionDisplayMessages(path string) ([]provider.Message, PersistedState
 }
 
 func loadSessionDisplayMessagesUnlocked(path string) ([]provider.Message, PersistedState, bool, error) {
-	msgs, _, damaged, err := loadSessionMessages(path)
+	msgs, _, damaged, digest, digestOK, err := loadSessionMessagesWithDigest(path)
 	if err != nil {
 		return nil, PersistedState{}, false, err
 	}
-	digest, err := digestSessionMessages(msgs)
-	if err != nil {
-		return nil, PersistedState{}, false, err
+	if !digestOK {
+		digest, err = digestSessionMessages(msgs)
+		if err != nil {
+			return nil, PersistedState{}, false, err
+		}
 	}
 	revision, ledgerDigest, err := sessionContentRevision(path)
 	if err != nil {
