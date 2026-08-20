@@ -43,10 +43,16 @@ const ALLOWED_WRITERS = new Set([
 //   paired with onParentScrollIntent so the arbiter sees the gesture.
 // - components/SettingsPanel.tsx: the settings overlay's own scroller.
 // - components/WorkspacePanel.tsx: the project tree's own scroller.
+// - components/editors/LineNumberCode.tsx: the file viewer's own scroller —
+//   resets scroll when a virtual file is replaced by a non-virtual one.
+// - custom/features/heartbeat/HeartbeatPanel.tsx: the heartbeat list's custom
+//   scrollbar thumb drag, mapped to its own scroller.
 const ALLOWED_RAW_SCROLLTOP = new Set([
   "lib/nestedScrollHandoff.ts",
   "components/SettingsPanel.tsx",
   "components/WorkspacePanel.tsx",
+  "components/editors/LineNumberCode.tsx",
+  "custom/features/heartbeat/HeartbeatPanel.tsx",
 ]);
 
 // Matches imperative scroll calls on the transcript Virtuoso handle, whether
