@@ -92,7 +92,10 @@ console.log("\nbundle budgets");
 // resync, programmatic-set force sync) adds 0.23 KiB gzip (0.054%) over the
 // W1 path; retain it with a 0.2 KiB (0.047%) ratchet and keep ~0.15 KiB of
 // build-SHA headroom.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 430.0 : 428.8;
+// Splitting the arbiter's tail-settle and anchor-compensation controllers
+// into their own modules (repolint file-size ceiling) adds 0.06 KiB gzip of
+// import/export wiring; retain it with a 0.2 KiB (0.047%) ratchet per gate.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 430.4 : 429.0;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
