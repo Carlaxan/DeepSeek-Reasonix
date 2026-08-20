@@ -11,7 +11,7 @@
 // React boots with canUseDOM=false and falls back to its keyup-driven
 // change-detection polyfill — the input event feeds onInputCapture
 // (inputType) while the trailing keyup is what delivers onChange. The
-// composition listeners in Composer are native, so plain
+// composition listeners in the IME guard hook are native, so plain
 // compositionstart/compositionend Events reach them directly.
 
 import { JSDOM } from "jsdom";

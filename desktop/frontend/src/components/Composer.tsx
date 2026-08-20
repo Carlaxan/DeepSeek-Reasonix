@@ -829,6 +829,18 @@ export function Composer({
   const openPastedLabelsRef = useRef(openPastedLabels);
   const sessionRefsRef = useRef(sessionRefs);
   const selectedTextRefsRef = useRef(selectedTextRefs);
+  // Plain-textarea IME freeze: while a composition is active the textarea
+  // renders uncontrolled so no re-render can cancel it (#8593/#8409); the
+  // hook owns the composition lifecycle, resync, and force-sync semantics.
+  const { composingRef, lastCompositionEndAt, trackImeInputChange } = useComposerImeGuard({
+    taRef,
+    text,
+    invocationCount: invocations.length,
+    textRef,
+    lastSelectionRef,
+    setText,
+    setPlainSelection,
+  });
   textRef.current = text;
   invocationsRef.current = invocations;
   attachmentsRef.current = attachments;
@@ -2973,73 +2985,6 @@ export function Composer({
     setTextareaAutoOverflow((current) => (current === nextOverflow ? current : nextOverflow));
   }, [composerHeight, heroMode, invocations.length]);
 
-  // Native composition listeners for the plain textarea, the same mechanism
-  // the rich input uses: React's synthetic composition events fall back to
-  // keyCode-229 inference wherever CompositionEvent is missing, and the
-  // freeze bookkeeping must run synchronously with the browser's composition
-  // lifecycle, not React's event batching.
-  useEffect(() => {
-    const node = taRef.current;
-    if (!node) return;
-    const onStart = () => {
-      composingRef.current = true;
-      imeStateTextRef.current = textRef.current;
-    };
-    const onEnd = () => {
-      composingRef.current = false;
-      lastCompositionEndAt.current = Date.now();
-      imeStateTextRef.current = null;
-      // compositionend's DOM value is authoritative: an IME cancel restores
-      // the pre-composition text while state may still hold the provisional
-      // text.
-      if (node.value !== textRef.current) {
-        const nextSelection = {
-          start: node.selectionStart ?? node.value.length,
-          end: node.selectionEnd ?? node.value.length,
-        };
-        textRef.current = node.value;
-        setText(node.value);
-        lastSelectionRef.current = nextSelection;
-        setPlainSelection(nextSelection);
-      }
-    };
-    node.addEventListener("compositionstart", onStart);
-    node.addEventListener("compositionend", onEnd);
-    return () => {
-      node.removeEventListener("compositionstart", onStart);
-      node.removeEventListener("compositionend", onEnd);
-      // Unmounting the textarea mid-composition (e.g. an invocation token
-      // swaps in the rich input) may never deliver compositionend; leaving
-      // composingRef stuck would suppress Enter-to-send forever.
-      if (composingRef.current) {
-        composingRef.current = false;
-        lastCompositionEndAt.current = Date.now();
-        imeStateTextRef.current = null;
-      }
-    };
-  }, [invocations.length]);
-
-  // Programmatic setText (history recall, menu inserts, draft switches)
-  // bypasses the textarea's onChange, so while the IME freeze renders the
-  // textarea uncontrolled those writes would never reach the DOM. A text
-  // change the IME path did not produce forces an authoritative resync and
-  // ends the frozen composition: programmatic content wins.
-  useLayoutEffect(() => {
-    if (!composingRef.current) return;
-    if (imeStateTextRef.current === text) return;
-    composingRef.current = false;
-    imeStateTextRef.current = null;
-    const node = taRef.current;
-    if (!node) return;
-    node.value = text;
-    const caret = Math.min(lastSelectionRef.current.start, text.length);
-    try {
-      node.setSelectionRange(caret, caret);
-    } catch {
-      // Detached/jsdom node: caret restore is best-effort.
-    }
-  }, [text]);
-
   useLayoutEffect(() => {
     measureTextareaAutoHeight();
   }, [text, measureTextareaAutoHeight]);
@@ -4598,23 +4543,7 @@ export function Composer({
                     const inputType = (e.nativeEvent as InputEvent).inputType
                       || pendingNativeInputTypeRef.current;
                     pendingNativeInputTypeRef.current = undefined;
-                    if (composingRef.current) {
-                      if ((e.nativeEvent as InputEvent).isComposing || inputType === "insertCompositionText") {
-                        // Mid-composition edits still reach state so app
-                        // logic (menus, counters, drafts) sees the live text;
-                        // the uncontrolled render above keeps the provisional
-                        // text out of React's DOM sync.
-                        imeStateTextRef.current = e.target.value;
-                      } else {
-                        // A non-composition input while frozen is the commit
-                        // (Chromium can fire it before compositionend;
-                        // WebView2 can deliver the committed text in a
-                        // following non-composing input): end the freeze so
-                        // this render resyncs normally.
-                        composingRef.current = false;
-                        imeStateTextRef.current = null;
-                      }
-                    }
+                    trackImeInputChange(e.nativeEvent as InputEvent, inputType, e.target.value);
                     resetPromptHistoryNavigation();
                     textRef.current = e.target.value;
                     setText(e.target.value);

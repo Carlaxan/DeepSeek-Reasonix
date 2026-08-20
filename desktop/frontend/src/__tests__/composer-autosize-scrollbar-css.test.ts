@@ -78,6 +78,10 @@ ok(
     && /composerAutoOverflow \? " composer-card--auto-overflow" : ""/.test(composerSource),
   "Composer wires the auto-overflow modifier to the autosize overflow state",
 );
+ok(
+  /Math\.min\(Math\.floor\(window\.innerHeight \* 0\.3\), 160\)/.test(composerSource),
+  "hero input JS cap is min(30vh, 160px)",
+);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

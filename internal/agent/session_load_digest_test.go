@@ -70,6 +70,15 @@ func writeLegacyJSONLSession(t *testing.T, path string, msgs []provider.Message)
 	}
 }
 
+// loadAndDigestSessionMessages loads like LoadSession does and returns the
+// decode-fused digest alongside the messages.
+func loadAndDigestSessionMessages(path string) (msgs []provider.Message, fromEvents, damaged bool, digest [sha256.Size]byte, digestOK bool, err error) {
+	hasher := newSessionTranscriptHasher()
+	msgs, fromEvents, damaged, err = loadSessionMessagesWithLimits(path, defaultSessionReplayLimits, hasher)
+	digest, digestOK = hasher.sum()
+	return msgs, fromEvents, damaged, digest, digestOK, err
+}
+
 func TestLoadSessionMessagesWithDigestMatchesLegacyEventLog(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	s := NewSession("sys")
@@ -82,9 +91,9 @@ func TestLoadSessionMessagesWithDigestMatchesLegacyEventLog(t *testing.T) {
 		}
 	}
 
-	msgs, fromEvents, damaged, digest, digestOK, err := loadSessionMessagesWithDigest(path)
+	msgs, fromEvents, damaged, digest, digestOK, err := loadAndDigestSessionMessages(path)
 	if err != nil {
-		t.Fatalf("loadSessionMessagesWithDigest: %v", err)
+		t.Fatalf("load: %v", err)
 	}
 	if !fromEvents || damaged {
 		t.Fatalf("fromEvents=%v damaged=%v, want event-log replay without damage", fromEvents, damaged)
@@ -105,9 +114,9 @@ func TestLoadSessionMessagesWithDigestMatchesLegacyJSONL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	writeLegacyJSONLSession(t, path, representativeSessionMessages())
 
-	msgs, fromEvents, damaged, digest, digestOK, err := loadSessionMessagesWithDigest(path)
+	msgs, fromEvents, damaged, digest, digestOK, err := loadAndDigestSessionMessages(path)
 	if err != nil {
-		t.Fatalf("loadSessionMessagesWithDigest: %v", err)
+		t.Fatalf("load: %v", err)
 	}
 	if fromEvents || damaged {
 		t.Fatalf("fromEvents=%v damaged=%v, want plain jsonl load", fromEvents, damaged)
@@ -138,9 +147,9 @@ func TestLoadSessionMessagesWithDigestCoversOnlyCleanPrefix(t *testing.T) {
 	}
 	f.Close()
 
-	msgs, _, damaged, digest, digestOK, err := loadSessionMessagesWithDigest(path)
+	msgs, _, damaged, digest, digestOK, err := loadAndDigestSessionMessages(path)
 	if err != nil {
-		t.Fatalf("loadSessionMessagesWithDigest: %v", err)
+		t.Fatalf("load: %v", err)
 	}
 	if !damaged {
 		t.Fatal("damaged = false, want true for torn tail")
@@ -296,8 +305,8 @@ func BenchmarkLoadSessionDigestFusion(b *testing.B) {
 	})
 	b.Run("fused_decode_digest", func(b *testing.B) {
 		for b.Loop() {
-			if _, _, _, _, ok, err := loadSessionMessagesWithDigest(path); err != nil || !ok {
-				b.Fatalf("loadSessionMessagesWithDigest: ok=%v err=%v", ok, err)
+			if _, _, _, _, ok, err := loadAndDigestSessionMessages(path); err != nil || !ok {
+				b.Fatalf("fused load: ok=%v err=%v", ok, err)
 			}
 		}
 	})

@@ -335,9 +335,6 @@ func replaySessionEventLog(path string) (sessionEventReplay, error) {
 	return replaySessionEventLogWithLimits(path, defaultSessionReplayLimits, nil)
 }
 
-// replaySessionEventLogWithLimits optionally feeds each applied message into
-// hasher (nil disables it); replace records rehash, so it always reflects the
-// final replayed transcript.
 func replaySessionEventLogWithLimits(path string, limits sessionReplayLimits, hasher *sessionTranscriptHasher) (sessionEventReplay, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -387,16 +384,13 @@ func replaySessionEventLogWithLimits(path string, limits sessionReplayLimits, ha
 			replay.msgs = msgs
 			replay.collectionItems = collectionItems
 			replay.times = make([]time.Time, len(replay.msgs))
-			hasher.reset()
-			hasher.addAll(msgs)
+			hasher.rehash(msgs)
 		case sessionEventTypeAppend:
 			if rec.MessageIndex != len(replay.msgs) {
 				replay.damaged = true
 				return replay, nil
 			}
-			msgs, collectionItems, err := decodeSessionEventMessages(
-				path, rec.Messages, len(replay.msgs), replay.collectionItems, limits,
-			)
+			msgs, collectionItems, err := decodeSessionEventMessages(path, rec.Messages, len(replay.msgs), replay.collectionItems, limits)
 			if err != nil {
 				if errors.Is(err, ErrSessionReplayLimitExceeded) {
 					return replay, err
@@ -561,63 +555,35 @@ func preflightSessionEventValue(path string, dec *json.Decoder, collectionItems 
 // not be replayed to its end (torn tail or corrupt record); callers that write
 // should rewrite-and-compact to heal it.
 func loadSessionMessages(sessionPath string) (msgs []provider.Message, fromEvents, damaged bool, err error) {
-	return loadSessionMessagesWithLimits(sessionPath, defaultSessionReplayLimits)
+	return loadSessionMessagesWithLimits(sessionPath, defaultSessionReplayLimits, nil)
 }
 
-func loadSessionMessagesWithLimits(sessionPath string, limits sessionReplayLimits) (msgs []provider.Message, fromEvents, damaged bool, err error) {
-	msgs, fromEvents, damaged, _, _, err = loadSessionMessagesWithLimitsHashed(sessionPath, limits, nil)
-	return msgs, fromEvents, damaged, err
-}
-
-// loadSessionMessagesWithDigest behaves like loadSessionMessages but also
-// returns the transcript digest accumulated while decoding, so callers that
-// persist a content baseline skip the second full re-serialize pass. digestOK
-// is false when a message could not be re-encoded; callers must fall back to
-// digestSessionMessages.
-func loadSessionMessagesWithDigest(sessionPath string) (msgs []provider.Message, fromEvents, damaged bool, digest [sha256.Size]byte, digestOK bool, err error) {
-	return loadSessionMessagesWithLimitsHashed(sessionPath, defaultSessionReplayLimits, newSessionTranscriptHasher())
-}
-
-func loadSessionMessagesWithLimitsHashed(sessionPath string, limits sessionReplayLimits, hasher *sessionTranscriptHasher) (msgs []provider.Message, fromEvents, damaged bool, digest [sha256.Size]byte, digestOK bool, err error) {
+func loadSessionMessagesWithLimits(sessionPath string, limits sessionReplayLimits, hasher *sessionTranscriptHasher) (msgs []provider.Message, fromEvents, damaged bool, err error) {
 	probe, err := probeSessionEventLogWithLimits(sessionPath, limits)
 	if err != nil {
-		return nil, false, false, digest, false, err
+		return nil, false, false, err
 	}
 	if probe.futureSchema {
-		return nil, true, false, digest, false, fmt.Errorf("session event log for %s uses schema %d; this build supports up to %d", sessionPath, probe.schemaVersion, sessionEventSchemaVersion)
+		return nil, true, false, fmt.Errorf("session event log for %s uses schema %d; this build supports up to %d", sessionPath, probe.schemaVersion, sessionEventSchemaVersion)
 	}
 	if probe.native && probe.size > 0 {
-		replay, replayErr := replaySessionEventLogWithLimitsHashed(store.SessionEventLog(sessionPath), limits, hasher)
+		replay, replayErr := replaySessionEventLogWithLimits(store.SessionEventLog(sessionPath), limits, hasher)
 		if replayErr != nil {
-			return nil, true, false, digest, false, replayErr
+			return nil, true, false, replayErr
 		}
 		if replay.records > 0 {
-			digest, digestOK = hasher.sum()
-			return replay.msgs, true, replay.damaged, digest, digestOK, nil
+			return replay.msgs, true, replay.damaged, nil
 		}
 		// Defensive: the probe saw a native head but nothing replayed; fall
 		// back to the checkpoint and let the next save rebuild the log.
-		hasher.reset()
-		msgs, err = loadSessionMessagesFromJSONLHashed(sessionPath, hasher)
-		if err != nil {
-			return nil, false, true, digest, false, err
-		}
-		digest, digestOK = hasher.sum()
-		return msgs, false, true, digest, digestOK, nil
+		msgs, err = loadSessionMessagesFromJSONL(sessionPath, hasher)
+		return msgs, false, true, err
 	}
-	msgs, err = loadSessionMessagesFromJSONLHashed(sessionPath, hasher)
-	if err != nil {
-		return nil, false, false, digest, false, err
-	}
-	digest, digestOK = hasher.sum()
-	return msgs, false, false, digest, digestOK, nil
+	msgs, err = loadSessionMessagesFromJSONL(sessionPath, hasher)
+	return msgs, false, false, err
 }
 
-func loadSessionMessagesFromJSONL(path string) ([]provider.Message, error) {
-	return loadSessionMessagesFromJSONLHashed(path, nil)
-}
-
-func loadSessionMessagesFromJSONLHashed(path string, hasher *sessionTranscriptHasher) ([]provider.Message, error) {
+func loadSessionMessagesFromJSONL(path string, hasher *sessionTranscriptHasher) ([]provider.Message, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -634,8 +600,7 @@ func loadSessionMessagesFromJSONLHashed(path string, hasher *sessionTranscriptHa
 			}
 			return nil, fmt.Errorf("decode %s: %w", path, err)
 		}
-		msgs = append(msgs, m)
-		hasher.add(m)
+		msgs = append(msgs, hasher.add(m))
 	}
 	return msgs, nil
 }
