@@ -173,3 +173,28 @@ func TestBuildRequestToolResultTextOnlyKeepsStringContent(t *testing.T) {
 		t.Fatalf("serialized tool_result = %s, want %s", body, want)
 	}
 }
+
+func TestOfficialDeepSeekVisionModelEmbedsImageBlock(t *testing.T) {
+	p, err := New(provider.Config{
+		Name:    "deepseek-anthropic",
+		BaseURL: "https://api.deepseek.com/anthropic",
+		Model:   "deepseek-v4-flash-vision-exp",
+		Extra:   map[string]any{"vision": true},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := p.(*client)
+	if !c.vision {
+		t.Fatal("official DeepSeek vision model must enable image input")
+	}
+	req := c.buildRequest(context.Background(), provider.Request{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: "describe", Images: []string{"data:image/jpeg;base64,ZZZZ"}},
+		},
+	})
+	blocks := req.Messages[0].Content
+	if len(blocks) != 2 || blocks[0].Type != "text" || blocks[1].Type != "image" {
+		t.Fatalf("blocks = %+v, want [text, image]", blocks)
+	}
+}

@@ -37,3 +37,36 @@ func TestOfficialDeepSeekResponsesImageMetadataMatchesTextOnlyWireBytes(t *testi
 		t.Fatalf("official DeepSeek Responses image metadata changed provider-visible bytes:\nplain: %s\nimage: %s", plainBody, imageBody)
 	}
 }
+
+func TestOfficialDeepSeekResponsesVisionModelEmbedsInputImage(t *testing.T) {
+	c := New(Config{
+		Name: "deepseek", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash-vision-exp",
+		Extra: map[string]any{"vision": true},
+	}).(*client)
+	if !c.vision {
+		t.Fatal("official DeepSeek vision model must enable image input")
+	}
+	textOnly := provider.Request{Messages: []provider.Message{{
+		Role: provider.RoleUser, Content: "describe this image",
+	}}}
+	withImage := provider.Request{Messages: []provider.Message{{
+		Role: provider.RoleUser, Content: "describe this image",
+		Images: []string{"data:image/png;base64," + strings.Repeat("QUFB", 200)},
+	}}}
+	textRequest, _, _ := c.buildRequestBody(textOnly)
+	textBody, err := json.Marshal(textRequest)
+	if err != nil {
+		t.Fatalf("marshal text request: %v", err)
+	}
+	imageRequest, _, _ := c.buildRequestBody(withImage)
+	imageBody, err := json.Marshal(imageRequest)
+	if err != nil {
+		t.Fatalf("marshal image request: %v", err)
+	}
+	if bytes.Equal(imageBody, textBody) {
+		t.Fatalf("official DeepSeek vision model dropped the image payload:\ntext:  %s\nimage: %s", textBody, imageBody)
+	}
+	if !strings.Contains(string(imageBody), `"type":"input_image"`) {
+		t.Fatalf("official DeepSeek vision request missing input_image part: %s", imageBody)
+	}
+}

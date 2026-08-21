@@ -37,6 +37,14 @@ func IsDeepSeek(baseURL string) bool {
 	return matchesVendorHost(baseURL, "deepseek.com", "api.deepseek.com")
 }
 
+// IsDeepSeekVisionModel reports whether model is the official DeepSeek model
+// that accepts image input. Every other official model 400s on image input, so
+// the vendor vision guard stays closed for them even when stale metadata claims
+// support.
+func IsDeepSeekVisionModel(model string) bool {
+	return strings.EqualFold(strings.TrimSpace(model), "deepseek-v4-flash-vision-exp")
+}
+
 // IsOpenAI reports whether baseURL points at OpenAI's official API host. Keep
 // this exact-host so a compatible gateway under another openai.com subdomain
 // cannot accidentally receive the official max_completion_tokens wire shape.

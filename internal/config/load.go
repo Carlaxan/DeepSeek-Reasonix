@@ -1641,13 +1641,13 @@ func normalizeOfficialDeepSeekModels(c *Config) {
 		}
 		switch strings.TrimSpace(p.Name) {
 		case "deepseek":
-			ensureProviderModels(p, []string{"deepseek-v4-flash", "deepseek-v4-pro"}, "deepseek-v4-flash")
+			ensureProviderModels(p, []string{"deepseek-v4-flash", "deepseek-v4-pro", deepSeekV4VisionModel}, "deepseek-v4-flash")
 		case "deepseek-flash":
 			ensureProviderModels(p, []string{"deepseek-v4-flash"}, "deepseek-v4-flash")
 		case "deepseek-pro":
 			ensureProviderModels(p, []string{"deepseek-v4-pro"}, "deepseek-v4-pro")
 		case "deepseek-responses":
-			ensureProviderModels(p, []string{"deepseek-v4-flash", "deepseek-v4-pro"}, "deepseek-v4-flash")
+			ensureProviderModels(p, []string{"deepseek-v4-flash", "deepseek-v4-pro", deepSeekV4VisionModel}, "deepseek-v4-flash")
 		}
 		backfillOfficialDeepSeekResponsesModels(p)
 		backfillDeepSeekAnthropicCapabilities(p)

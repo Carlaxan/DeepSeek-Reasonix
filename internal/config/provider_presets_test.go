@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -147,6 +148,33 @@ func TestOpenCodeGoContextWindowPresetsMatchModelsDev(t *testing.T) {
 	dsResp, _ := CuratedProviderPreset("opencode-go-deepseek-responses")
 	if dsResp.Entries[0].ContextWindow != 1_000_000 {
 		t.Fatalf("deepseek responses window = %d", dsResp.Entries[0].ContextWindow)
+	}
+}
+
+func TestOfficialDeepSeekPresetsIncludeVisionModel(t *testing.T) {
+	for _, id := range []string{"deepseek-responses", "deepseek-anthropic"} {
+		preset, ok := CuratedProviderPreset(id)
+		if !ok || len(preset.Entries) != 1 {
+			t.Fatalf("preset %s = %+v, found=%v", id, preset, ok)
+		}
+		entry := preset.Entries[0]
+		if !entry.HasModel(deepSeekV4VisionModel) {
+			t.Fatalf("%s models = %v, want %s included", id, entry.ModelList(), deepSeekV4VisionModel)
+		}
+		if !entry.HasVisionModel(deepSeekV4VisionModel) {
+			t.Fatalf("%s vision_models = %v, want %s declared", id, entry.VisionModels, deepSeekV4VisionModel)
+		}
+		entry.Model = deepSeekV4VisionModel
+		if !EffectiveVision(&entry) {
+			t.Fatalf("%s vision model must enable image input by default", id)
+		}
+		entry.Model = "deepseek-v4-flash"
+		if EffectiveVision(&entry) {
+			t.Fatalf("%s flash must stay text-only", id)
+		}
+		if entry.Prices[deepSeekV4VisionModel] == nil {
+			t.Fatalf("%s vision model pricing missing", id)
+		}
 	}
 }
 
@@ -302,7 +330,7 @@ func TestDeepSeekResponsesPresetMatchesOfficialSupport(t *testing.T) {
 	if entry.ModelsURL != "" {
 		t.Fatalf("deepseek responses models URL = %q, want static supported-model list", entry.ModelsURL)
 	}
-	if !EffectiveWebSearch(&entry) || entry.Vision || entry.VisionModels != nil {
+	if !EffectiveWebSearch(&entry) || entry.Vision || !slices.Equal(entry.VisionModels, deepSeekV4VisionModels) {
 		t.Fatalf("deepseek responses capabilities = web_search:%t vision:%t vision_models:%v", EffectiveWebSearch(&entry), entry.Vision, entry.VisionModels)
 	}
 	var cfg Config

@@ -290,3 +290,31 @@ func TestBuildRequestSkipsToolImagesWithoutVision(t *testing.T) {
 		t.Fatalf("tool content = %#v, want the plain placeholder string", req.Messages[2].Content)
 	}
 }
+
+func TestOfficialDeepSeekVisionModelEmbedsImageURL(t *testing.T) {
+	p, err := New(provider.Config{
+		Name:    "deepseek",
+		BaseURL: "https://api.deepseek.com",
+		Model:   "deepseek-v4-flash-vision-exp",
+		Extra:   map[string]any{"vision": true},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := p.(*client)
+	if !c.vision {
+		t.Fatal("official DeepSeek vision model must enable image input")
+	}
+	req := c.buildRequest(provider.Request{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: "what is this", Images: []string{"data:image/png;base64,AAAA"}},
+		},
+	})
+	parts, ok := req.Messages[0].Content.([]chatContentPart)
+	if !ok {
+		t.Fatalf("vision user content = %T, want []chatContentPart", req.Messages[0].Content)
+	}
+	if len(parts) != 2 || parts[0].Type != "text" || parts[1].Type != "image_url" {
+		t.Fatalf("parts = %+v, want [text, image_url]", parts)
+	}
+}

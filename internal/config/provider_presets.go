@@ -90,9 +90,11 @@ var (
 	kimiAPIVisionModels = []string{"kimi-k3", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k2.6", "kimi-k2.5"}
 	kimiCodingModels    = []string{"kimi-for-coding"}
 
-	longCat20Models   = []string{"LongCat-2.0"}
-	deepSeekV4Models  = []string{"deepseek-v4-flash", "deepseek-v4-pro"}
-	tokenRhythmModels = []string{
+	longCat20Models        = []string{"LongCat-2.0"}
+	deepSeekV4Models       = []string{"deepseek-v4-flash", "deepseek-v4-pro"}
+	deepSeekV4VisionModel  = "deepseek-v4-flash-vision-exp"
+	deepSeekV4VisionModels = []string{deepSeekV4VisionModel}
+	tokenRhythmModels      = []string{
 		"deepseek-v4-flash", "deepseek-v4-pro", "glm-5", "glm-5.1",
 		"minimax-m2.7", "kimi-k2.5", "kimi-k2.6", "minimax-m2.5",
 		"mimo-v2.5-pro", "qwen3.7-max", "kimi-k2.7-code", "glm-5.2",
@@ -141,6 +143,13 @@ var (
 	nvidiaModels      = []string{"nvidia/nemotron-3-nano-30b-a3b", "nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3-ultra-550b-a55b", "deepseek-ai/deepseek-v4-pro", "qwen/qwen3.5-397b-a17b"}
 	ollamaCloudModels = []string{"glm-5.2", "kimi-k2.7-code", "deepseek-v4-pro", "deepseek-v4-flash", "minimax-m3", "nemotron-3-nano:30b", "qwen3-coder-next"}
 )
+
+// deepSeekV4OfficialModels returns the curated official model set including the
+// vision model, as a fresh slice so callers never share the preset's backing
+// array.
+func deepSeekV4OfficialModels() []string {
+	return []string{"deepseek-v4-flash", "deepseek-v4-pro", deepSeekV4VisionModel}
+}
 
 func qwenModelContextOverrides() map[string]ProviderModelOverride {
 	return map[string]ProviderModelOverride{
@@ -208,13 +217,14 @@ var curatedProviderPresets = []ProviderPreset{
 	{
 		ID:          "deepseek-anthropic",
 		Label:       "DeepSeek Official Anthropic",
-		Description: "Separate official DeepSeek Anthropic-compatible entry for Flash and Pro.",
+		Description: "Separate official DeepSeek Anthropic-compatible entry for Flash, Pro and the vision model.",
 		KeyEnv:      "DEEPSEEK_API_KEY",
 		Entries: []ProviderEntry{{
 			Name:           "deepseek-anthropic",
 			Kind:           "anthropic",
 			BaseURL:        deepSeekAnthropicBaseURL,
-			Models:         deepSeekV4Models,
+			Models:         deepSeekV4OfficialModels(),
+			VisionModels:   deepSeekV4VisionModels,
 			Default:        "deepseek-v4-flash",
 			APIKeyEnv:      "DEEPSEEK_API_KEY",
 			BalanceURL:     "https://api.deepseek.com/user/balance",
@@ -559,13 +569,14 @@ var curatedProviderPresets = []ProviderPreset{
 	{
 		ID:          "deepseek-responses",
 		Label:       "DeepSeek Official Responses API",
-		Description: "Official stateless DeepSeek Responses API for Flash and Pro with server-side web search.",
+		Description: "Official stateless DeepSeek Responses API for Flash, Pro and the vision model with server-side web search.",
 		KeyEnv:      "DEEPSEEK_API_KEY",
 		Entries: []ProviderEntry{{
 			Name:           "deepseek-responses",
 			Kind:           "responses",
 			BaseURL:        "https://api.deepseek.com",
-			Models:         deepSeekV4Models,
+			Models:         deepSeekV4OfficialModels(),
+			VisionModels:   deepSeekV4VisionModels,
 			Default:        "deepseek-v4-flash",
 			APIKeyEnv:      "DEEPSEEK_API_KEY",
 			BalanceURL:     "https://api.deepseek.com/user/balance",

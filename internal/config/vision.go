@@ -60,22 +60,36 @@ func modelTokenSeparator(r rune) bool {
 }
 
 // CanConfigureVision reports whether user-supplied vision metadata may enable
-// image input for this endpoint. DeepSeek's official APIs currently accept text
-// message content only, so their protocol constraint is authoritative over
-// persisted provider-wide flags, vision_models, and model overrides. Custom
-// DeepSeek-compatible gateways remain configurable because they may implement
-// their own multimodal translation layer.
+// image input for this endpoint. Official DeepSeek endpoints accept image input
+// only on models declared as vision-capable (deepseek-v4-flash-vision-exp), so
+// their wire constraint is enforced per model in EffectiveVision rather than
+// here. Custom DeepSeek-compatible gateways remain configurable because they may
+// implement their own multimodal translation layer.
 func CanConfigureVision(e *ProviderEntry) bool {
-	return e != nil && !openai.IsDeepSeek(e.BaseURL)
+	return e != nil
 }
 
 // EffectiveVision resolves whether the selected model accepts image input.
-// Explicit provider vision still wins for custom vision-capable gateways; the
-// MiMo endpoint heuristic is deliberately limited to known MiMo endpoints so
-// arbitrary OpenAI-compatible proxies do not get image payloads unexpectedly.
+// Official DeepSeek endpoints accept images only on the known vision model
+// (deepseek-v4-flash-vision-exp); every other model 400s on image input, so no
+// provider-wide flag or per-model declaration can enable it. The vision model
+// itself honors a per-model false override and the persisted VisionModels flag
+// (the Settings switch). For other endpoints, explicit provider vision still
+// wins for custom vision-capable gateways; the MiMo endpoint heuristic is
+// deliberately limited to known MiMo endpoints so arbitrary OpenAI-compatible
+// proxies do not get image payloads unexpectedly.
 func EffectiveVision(e *ProviderEntry) bool {
 	if !CanConfigureVision(e) {
 		return false
+	}
+	if openai.IsDeepSeek(e.BaseURL) {
+		if !strings.EqualFold(strings.TrimSpace(e.Model), deepSeekV4VisionModel) {
+			return false
+		}
+		if e.visionOverride != nil {
+			return *e.visionOverride
+		}
+		return e.HasVisionModel(e.Model)
 	}
 	if enabled, explicit := explicitModelVision(e); explicit {
 		return enabled

@@ -768,7 +768,7 @@ func TestEffectiveVisionDoesNotInferCustomMimoProxy(t *testing.T) {
 	}
 }
 
-func TestEffectiveVisionRejectsOfficialDeepSeekOverridesButPreservesCustomGateways(t *testing.T) {
+func TestEffectiveVisionForOfficialDeepSeekVisionModels(t *testing.T) {
 	for _, endpoint := range []struct {
 		kind    string
 		baseURL string
@@ -777,30 +777,53 @@ func TestEffectiveVisionRejectsOfficialDeepSeekOverridesButPreservesCustomGatewa
 		{kind: "openai", baseURL: "https://api.deepseek.com/v1"},
 		{kind: "openai", baseURL: "https://eu.deepseek.com/v1"},
 		{kind: "anthropic", baseURL: "https://api.deepseek.com/anthropic"},
+		{kind: "responses", baseURL: "https://api.deepseek.com"},
 	} {
-		visionOn := true
-		official := &ProviderEntry{
-			Name:              "deepseek",
-			Kind:              endpoint.kind,
-			BaseURL:           endpoint.baseURL,
-			Model:             "deepseek-v4-pro",
-			Vision:            true,
-			VisionModels:      []string{"deepseek-v4-pro"},
-			visionOverride:    &visionOn,
-			ReasoningProtocol: ReasoningProtocolDeepSeek,
+		visionModel := &ProviderEntry{
+			Name:         "deepseek",
+			Kind:         endpoint.kind,
+			BaseURL:      endpoint.baseURL,
+			Model:        deepSeekV4VisionModel,
+			VisionModels: deepSeekV4VisionModels,
 		}
-		if CanConfigureVision(official) {
-			t.Fatalf("official DeepSeek endpoint %q must not allow vision configuration", endpoint.baseURL)
+		if !CanConfigureVision(visionModel) {
+			t.Fatalf("official DeepSeek endpoint %q must allow vision configuration for declared vision models", endpoint.baseURL)
 		}
-		if EffectiveVision(official) {
-			t.Fatalf("official DeepSeek endpoint %q must remain text-only", endpoint.baseURL)
+		if !EffectiveVision(visionModel) {
+			t.Fatalf("official DeepSeek endpoint %q vision model must enable image input by default", endpoint.baseURL)
 		}
-		if ExplicitModelVision(official) {
-			t.Fatalf("official DeepSeek endpoint %q must not expose ignored vision metadata as usable", endpoint.baseURL)
+		if !ExplicitModelVision(visionModel) {
+			t.Fatalf("official DeepSeek endpoint %q must expose the declared vision model as usable", endpoint.baseURL)
 		}
-		if !official.HasVisionModel("deepseek-v4-pro") {
-			t.Fatalf("official DeepSeek endpoint %q lost persisted vision metadata instead of ignoring it", endpoint.baseURL)
-		}
+	}
+
+	textOnly := &ProviderEntry{
+		Name:    "deepseek",
+		Kind:    "openai",
+		BaseURL: "https://api.deepseek.com",
+		Model:   "deepseek-v4-pro",
+		Vision:  true,
+	}
+	if !CanConfigureVision(textOnly) || EffectiveVision(textOnly) {
+		t.Fatal("the provider-wide Vision flag must not enable image input for official DeepSeek text-only models")
+	}
+
+	visionOff := &Config{Providers: []ProviderEntry{{
+		Name:    "deepseek",
+		Kind:    "responses",
+		BaseURL: "https://api.deepseek.com",
+		Models:  []string{deepSeekV4VisionModel},
+		Default: deepSeekV4VisionModel,
+		ModelOverrides: map[string]ProviderModelOverride{
+			deepSeekV4VisionModel: {Vision: boolPointer(false)},
+		},
+	}}}
+	offModel, ok := visionOff.ResolveModel("deepseek/" + deepSeekV4VisionModel)
+	if !ok {
+		t.Fatal("ResolveModel did not find the official vision model")
+	}
+	if EffectiveVision(offModel) {
+		t.Fatal("a per-model vision=false override must disable image input for the official vision model")
 	}
 
 	future := &ProviderEntry{
@@ -811,7 +834,7 @@ func TestEffectiveVisionRejectsOfficialDeepSeekOverridesButPreservesCustomGatewa
 		VisionModels: []string{"deepseek-v5-vision"},
 	}
 	if EffectiveVision(future) {
-		t.Fatal("a future model name must not bypass the official DeepSeek wire constraint")
+		t.Fatal("a future model name must not enable image input without an official vision model declaration")
 	}
 
 	visionOn := true
@@ -829,9 +852,11 @@ func TestEffectiveVisionRejectsOfficialDeepSeekOverridesButPreservesCustomGatewa
 		t.Fatal("ResolveModel did not find explicit future DeepSeek model")
 	}
 	if EffectiveVision(overridden) {
-		t.Fatal("model_overrides vision=true must not bypass the official DeepSeek wire constraint")
+		t.Fatal("model_overrides vision=true must not enable image input for undeclared official DeepSeek models")
 	}
+}
 
+func TestEffectiveVisionPreservesCustomDeepSeekGatewayCapabilities(t *testing.T) {
 	custom := &ProviderEntry{
 		Name:              "deepseek-gateway",
 		Kind:              "openai",
